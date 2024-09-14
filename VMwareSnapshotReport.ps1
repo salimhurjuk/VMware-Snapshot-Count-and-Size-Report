@@ -1,6 +1,6 @@
 <#
     .SYNOPSIS
-    VMwareSnapshotReport_v3.ps1
+    VMwareSnapshotReport_v1.ps1
 
     .DESCRIPTION
     1. Export VMware VMs Snapshot Count and Size in GB.
@@ -13,6 +13,18 @@
     Written by: Salim Hurjuk
     LinkedIn:   linkedin.com/in/salimhurjuk
     Twitter:    https://x.com/salimhurjuk
+
+    #### UPDATE ####
+    
+    Use Method to Securely Save the Credentials for vCenter and SMTP
+    
+    # Saving vCenter Credentials#
+    $vcCred = Get-Credential -Message "Enter vCenter Server credentials (username and password)"
+    $vcCred | Export-Clixml -Path "C:\vcCred.xml"
+
+    # Saving SMTP Credentials#
+    $smtpCred = Get-Credential -Message "Enter SMTP credentials (email and password)"
+    $smtpCred | Export-Clixml -Path "C:\smtpCred.xml"
 
     .CHANGELOG
     v1.00, 14/09/2024 - Initial version
@@ -33,17 +45,16 @@ $from = "sender@domain.com"
 $to = "receiver@domain.com"
 $subject = "VMware Snapshot Report"
 
-# SMTP Credentials
-$smtpUser = "sender@domain.com"
-$smtpPassword = "Password"
+# Load the encrypted vCenter and SMTP credentials
+$vcCred = Import-Clixml -Path "C:\vcCred.xml"
+$smtpCred = Import-Clixml -Path "C:\smtpCred.xml"
 
-# Connect to vCenter Server
-$cred = Get-Credential -Message "Enter vCenter Server credentials"
-Connect-VIServer -Server $vCenterServer -Credential $cred
+# Connect to vCenter Server using encrypted credentials
+Connect-VIServer -Server $vCenterServer -Credential $vcCred
 
 # Get all VMs with snapshot count, size, and PendingDeletion column
 $vmReport = Get-VM | Select-Object Name, 
-@{Name="VMIPAddress";Expression={ ($_ | Get-VMGuest).IPAddress -join ", " }},
+@{Name="VM-IPAddress";Expression={ ($_ | Get-VMGuest).IPAddress -join ", " }},
 @{Name="SnapshotCount";Expression={ (Get-Snapshot -VM $_).Count }},
 @{Name="PendingDeletion";Expression={ (Get-Snapshot -VM $_).Count - 2 }},
 @{Name="SnapshotSizeGB";Expression={ "{0:N2}" -f ((Get-Snapshot -VM $_ | Measure-Object -Property SizeGB -Sum).Sum) }}
@@ -109,7 +120,7 @@ $htmlContent = @"
             <tr>
                 <th>SrNo</th>
                 <th>VMName</th>
-                <th>VMIPAddress</th>
+                <th>VM-IPAddress</th>
                 <th>SnapshotCount</th>
                 <th>PendingDeletion</th>
                 <th>SnapshotSizeGB</th>
@@ -124,7 +135,7 @@ foreach ($vm in $vmReport) {
     $htmlContent += "<tr>
         <td>$srNo</td>
         <td>$($vm.Name)</td>
-        <td>$($vm.VMIPAddress)</td>
+        <td>$($vm.VM-IPAddress)</td>
         <td>$($vm.SnapshotCount)</td>
         <td>$($vm.PendingDeletion)</td>
         <td>$($vm.SnapshotSizeGB)</td>
@@ -158,9 +169,6 @@ $htmlContent | Set-Content -Path $htmlReportPath -Encoding UTF8
 
 # Disconnect from vCenter
 Disconnect-VIServer -Server $vCenterServer -Confirm:$false
-
-# Create SMTP Credential Object
-$smtpCred = New-Object PSCredential ($smtpUser, (ConvertTo-SecureString $smtpPassword -AsPlainText -Force))
 
 # Send Email with HTML content in the body and attach both HTML and CSV reports
 Send-MailMessage -SmtpServer $smtpServer -Port $smtpPort -From $from -To $to -Subject $subject -Body $htmlContent -BodyAsHtml -Credential $smtpCred -UseSsl -Attachments $htmlReportPath, $csvReportPath
